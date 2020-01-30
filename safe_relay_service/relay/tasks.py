@@ -292,7 +292,8 @@ def check_create2_deployed_safes_task() -> None:
                         safe_creation2.block_number = block_number
                         safe_creation2.save()
                 else:
-                    # If safe was not included in any block after 35 minutes (mempool limit is 30), we try to deploy it again
+                    # If safe was not included in any block after 35 minutes (mempool limit is 30)
+                    # we try to deploy it again
                     if safe_creation2.modified + timedelta(minutes=35) < timezone.now():
                         logger.info('Safe=%s with tx-hash=%s was not deployed after 10 minutes',
                                     safe_address, safe_creation2.tx_hash)
@@ -300,7 +301,8 @@ def check_create2_deployed_safes_task() -> None:
                         safe_creation2.save()
                         deploy_create2_safe_task.delay(safe_address, retry=False)
 
-            for safe_creation2 in SafeCreation2.objects.not_deployed():
+            for safe_creation2 in SafeCreation2.objects.not_deployed().filter(
+                    created__gte=timezone.now() - timedelta(days=10)):
                 deploy_create2_safe_task.delay(safe_creation2.safe.address, retry=False)
     except LockError:
         pass
@@ -369,3 +371,46 @@ def find_erc_20_721_transfers_task() -> int:
     except LockError:
         pass
     return number_safes
+
+
+@app.shared_task(soft_time_limit=60)
+def check_pending_transactions() -> int:
+    """
+    Find txs that have not been mined after a while
+    :return: Number of pending transactions
+    """
+    number_txs = 0
+    try:
+        redis = RedisRepository().redis
+        with redis.lock('tasks:check_pending_transactions', blocking_timeout=1, timeout=60):
+            tx_not_mined_alert = settings.SAFE_TX_NOT_MINED_ALERT_MINUTES
+            txs = TransactionServiceProvider().get_pending_multisig_transactions(older_than=tx_not_mined_alert * 60)
+            for tx in txs:
+                logger.error('Tx with tx-hash=%s and safe-tx-hash=%s has not been mined after a while, created=%s',
+                             tx.ethereum_tx_id, tx.safe_tx_hash, tx.created)
+                number_txs += 1
+    except LockError:
+        pass
+    return number_txs
+
+
+@app.shared_task(soft_time_limit=60)
+def check_and_update_pending_transactions() -> int:
+    """
+    Check if pending txs have been mined and update them
+    :return: Number of pending transactions
+    """
+    number_txs = 0
+    try:
+        redis = RedisRepository().redis
+        with redis.lock('tasks:check_and_update_pending_transactions', blocking_timeout=1, timeout=60):
+            transaction_service = TransactionServiceProvider()
+            txs = TransactionServiceProvider().get_pending_multisig_transactions(older_than=15)
+            for tx in txs:
+                ethereum_tx = transaction_service.create_or_update_ethereum_tx(tx.ethereum_tx_id)
+                if ethereum_tx and ethereum_tx.block_id:
+                    logger.info('Updated tx with tx-hash=%s and block=%d', ethereum_tx.tx_hash, ethereum_tx.block_id)
+                    number_txs += 1
+    except LockError:
+        pass
+    return number_txs

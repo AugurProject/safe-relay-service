@@ -1,7 +1,9 @@
+from datetime import timedelta
 from logging import getLogger
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from django.db import IntegrityError
+from django.db.models import Q
 from django.utils import timezone
 
 from eth_account import Account
@@ -19,7 +21,7 @@ from safe_relay_service.gas_station.gas_station import (GasStation,
 from safe_relay_service.tokens.models import Token
 from safe_relay_service.tokens.price_oracles import CannotGetTokenPriceFromApi
 
-from ..models import EthereumTx, SafeContract, SafeMultisigTx
+from ..models import EthereumBlock, EthereumTx, SafeContract, SafeMultisigTx
 from ..repositories.redis_repository import EthereumNonceLock, RedisRepository
 
 logger = getLogger(__name__)
@@ -122,7 +124,7 @@ class TransactionService:
         self.redis = redis
         self.safe_valid_contract_addresses = safe_valid_contract_addresses
         self.proxy_factory = ProxyFactory(proxy_factory_address, self.ethereum_client)
-        self.tx_sender_account = Account.privateKeyToAccount(tx_sender_private_key)
+        self.tx_sender_account = Account.from_key(tx_sender_private_key)
 
     @staticmethod
     def _check_refund_receiver(refund_receiver: str) -> bool:
@@ -146,7 +148,7 @@ class TransactionService:
             Token.objects.get(address=address, gas=True)
             return True
         except Token.DoesNotExist:
-            logger.warning('Cannot retrieve gas token from db: Gas token %s not valid' % address)
+            logger.warning('Cannot retrieve gas token from db: Gas token %s not valid', address)
             return False
 
     def _check_safe_gas_price(self, gas_token: Optional[str], safe_gas_price: int) -> bool:
@@ -173,7 +175,7 @@ class TransactionService:
                 # We use gas station tx gas price. We cannot use internal tx's because is calculated
                 # based on the gas token
             except Token.DoesNotExist:
-                logger.warning('Cannot retrieve gas token from db: Gas token %s not valid' % gas_token)
+                logger.warning('Cannot retrieve gas token from db: Gas token %s not valid', gas_token)
                 raise InvalidGasToken('Gas token %s not valid' % gas_token)
         else:
             if safe_gas_price < minimum_accepted_gas_price:
@@ -385,8 +387,8 @@ class TransactionService:
         safe_base_gas_estimation = safe.estimate_tx_base_gas(to, value, data, operation, gas_token,
                                                              safe_tx_gas_estimation)
         if safe_tx_gas < safe_tx_gas_estimation or base_gas < safe_base_gas_estimation:
-            raise InvalidGasEstimation("Gas should be at least equal to safe-tx-gas=%d and data-gas=%d. Current is "
-                                       "safe-tx-gas=%d and data-gas=%d" %
+            raise InvalidGasEstimation("Gas should be at least equal to safe-tx-gas=%d and base-gas=%d. Current is "
+                                       "safe-tx-gas=%d and base-gas=%d" %
                                        (safe_tx_gas_estimation, safe_base_gas_estimation, safe_tx_gas, base_gas))
 
         # Use user provided gasPrice for TX if more than our stardard gas price
@@ -398,6 +400,8 @@ class TransactionService:
 
         tx_sender_private_key = self.tx_sender_account.privateKey
         tx_sender_address = Account.privateKeyToAccount(tx_sender_private_key).address
+        # tx_sender_private_key = self.tx_sender_account.key
+        # tx_sender_address = Account.from_key(tx_sender_private_key).address
 
         safe_tx = safe.build_multisig_tx(
             to,
@@ -416,7 +420,7 @@ class TransactionService:
 
         if safe_tx.signers != safe_tx.sorted_signers:
             raise SignaturesNotSorted('Safe-tx-hash=%s - Signatures are not sorted by owner: %s' %
-                                      (safe_tx.safe_tx_hash, safe_tx.signers))
+                                      (safe_tx.safe_tx_hash.hex(), safe_tx.signers))
 
         safe_tx.call(tx_sender_address=tx_sender_address, block_identifier=block_identifier)
 
@@ -424,4 +428,43 @@ class TransactionService:
                                timeout=60 * 2) as tx_nonce:
             tx_hash, tx = safe_tx.execute(tx_sender_private_key, tx_gas=tx_gas, tx_gas_price=tx_gas_price,
                                           tx_nonce=tx_nonce, block_identifier=block_identifier)
-            return tx_hash, safe_tx.tx_hash, tx
+            return tx_hash, safe_tx.safe_tx_hash, tx
+
+    def get_pending_multisig_transactions(self, older_than: int) -> List[SafeMultisigTx]:
+        """
+        Get multisig txs that have not been mined after `older_than` seconds
+        :param older_than: Time in seconds for a tx to be considered pending, if 0 all will be returned
+        """
+        return SafeMultisigTx.objects.filter(
+            Q(ethereum_tx__block=None) | Q(ethereum_tx=None)
+        ).filter(
+            created__lte=timezone.now() - timedelta(seconds=older_than),
+        )
+
+    # TODO Refactor and test
+    def create_or_update_ethereum_tx(self, tx_hash: str) -> EthereumTx:
+        try:
+            ethereum_tx = EthereumTx.objects.get(tx_hash=tx_hash)
+            if ethereum_tx.block is None:
+                tx_receipt = self.ethereum_client.get_transaction_receipt(tx_hash)
+                if tx_receipt:
+                    ethereum_tx.block = self.get_or_create_ethereum_block(tx_receipt.blockNumber)
+                    ethereum_tx.gas_used = tx_receipt.gasUsed
+                    ethereum_tx.save()
+            return ethereum_tx
+        except EthereumTx.DoesNotExist:
+            tx = self.ethereum_client.get_transaction(tx_hash)
+            if tx:
+                if tx_receipt:
+                    tx_receipt = self.ethereum_client.get_transaction_receipt(tx_hash)
+                    ethereum_block = self.get_or_create_ethereum_block(tx_receipt.blockNumber)
+                    return EthereumTx.objects.create_from_tx(tx, tx_hash, tx_receipt.gasUsed, ethereum_block)
+                return EthereumTx.objects.create_from_tx(tx, tx_hash)
+
+    # TODO Refactor and test
+    def get_or_create_ethereum_block(self, block_number: int):
+        try:
+            return EthereumBlock.objects.get(number=block_number)
+        except EthereumBlock.DoesNotExist:
+            block = self.ethereum_client.get_block(block_number)
+            return EthereumBlock.objects.create_from_block(block)

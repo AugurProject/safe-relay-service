@@ -29,8 +29,7 @@ from .models import (EthereumEvent, EthereumTx, InternalTx, SafeContract,
 from .serializers import (
     ERC20Serializer, ERC721Serializer, EthereumTxWithInternalTxsSerializer,
     InternalTxWithEthereumTxSerializer, SafeBalanceResponseSerializer,
-    SafeContractSerializer, SafeCreationEstimateResponseSerializer,
-    SafeCreationEstimateSerializer, SafeCreationResponseSerializer,
+    SafeContractSerializer, SafeCreationResponseSerializer,
     SafeCreationSerializer, SafeFundingResponseSerializer,
     SafeMultisigEstimateTxResponseSerializer, SafeMultisigTxResponseSerializer,
     SafeRelayMultisigTxSerializer, SafeResponseSerializer,
@@ -39,8 +38,7 @@ from .services import StatsServiceProvider
 from .services.funding_service import FundingServiceException
 from .services.safe_creation_service import (SafeCreationServiceException,
                                              SafeCreationServiceProvider)
-from .services.transaction_service import (SafeMultisigTxExists,
-                                           TransactionServiceException,
+from .services.transaction_service import (TransactionServiceException,
                                            TransactionServiceProvider)
 from .tasks import fund_deployer_task
 
@@ -66,9 +64,10 @@ def custom_exception_handler(exc, context):
             exception_str = exc.__class__.__name__
         response.data = {'exception':  exception_str}
 
-        logger.warning('%s - Exception: %s - Data received %s' % (context['request'].build_absolute_uri(),
-                                                                  exception_str,
-                                                                  context['request'].data))
+        logger.warning('%s - Exception: %s - Data received %s',
+                       context['request'].build_absolute_uri(),
+                       exception_str,
+                       context['request'].data)
     return response
 
 
@@ -76,9 +75,9 @@ class AboutView(APIView):
     renderer_classes = (JSONRenderer,)
 
     def get(self, request, format=None):
-        safe_funder_public_key = Account.privateKeyToAccount(settings.SAFE_FUNDER_PRIVATE_KEY).address \
+        safe_funder_public_key = Account.from_key(settings.SAFE_FUNDER_PRIVATE_KEY).address \
             if settings.SAFE_FUNDER_PRIVATE_KEY else None
-        safe_sender_public_key = Account.privateKeyToAccount(settings.SAFE_TX_SENDER_PRIVATE_KEY).address \
+        safe_sender_public_key = Account.from_key(settings.SAFE_TX_SENDER_PRIVATE_KEY).address \
             if settings.SAFE_TX_SENDER_PRIVATE_KEY else None
         content = {
             'name': 'Safe Relay Service',
@@ -97,13 +96,17 @@ class AboutView(APIView):
                 'SAFE_CHECK_DEPLOYER_FUNDED_DELAY': settings.SAFE_CHECK_DEPLOYER_FUNDED_DELAY,
                 'SAFE_CHECK_DEPLOYER_FUNDED_RETRIES': settings.SAFE_CHECK_DEPLOYER_FUNDED_RETRIES,
                 'SAFE_CONTRACT_ADDRESS': settings.SAFE_CONTRACT_ADDRESS,
+                'SAFE_DEFAULT_CALLBACK_HANDLER': settings.SAFE_DEFAULT_CALLBACK_HANDLER,
                 'SAFE_FIXED_CREATION_COST': settings.SAFE_FIXED_CREATION_COST,
                 'SAFE_FUNDER_MAX_ETH': settings.SAFE_FUNDER_MAX_ETH,
                 'SAFE_FUNDER_PUBLIC_KEY': safe_funder_public_key,
                 'SAFE_FUNDING_CONFIRMATIONS': settings.SAFE_FUNDING_CONFIRMATIONS,
-                'SAFE_OLD_CONTRACT_ADDRESS': settings.SAFE_OLD_CONTRACT_ADDRESS,
                 'SAFE_PROXY_FACTORY_ADDRESS': settings.SAFE_PROXY_FACTORY_ADDRESS,
+                'SAFE_PROXY_FACTORY_V1_0_0_ADDRESS': settings.SAFE_PROXY_FACTORY_V1_0_0_ADDRESS,
+                'SAFE_TX_NOT_MINED_ALERT_MINUTES': settings.SAFE_TX_NOT_MINED_ALERT_MINUTES,
                 'SAFE_TX_SENDER_PUBLIC_KEY': safe_sender_public_key,
+                'SAFE_V0_0_1_CONTRACT_ADDRESS': settings.SAFE_V0_0_1_CONTRACT_ADDRESS,
+                'SAFE_V1_0_0_CONTRACT_ADDRESS': settings.SAFE_V1_0_0_CONTRACT_ADDRESS,
                 'SAFE_VALID_CONTRACT_ADDRESSES': settings.SAFE_VALID_CONTRACT_ADDRESSES,
             }
         }
@@ -154,27 +157,6 @@ class SafeCreationView(CreateAPIView):
             http_status = status.HTTP_422_UNPROCESSABLE_ENTITY \
                 if 's' in serializer.errors else status.HTTP_400_BAD_REQUEST
             return Response(status=http_status, data=serializer.errors)
-
-
-class SafeCreationEstimateView(CreateAPIView):
-    permission_classes = (AllowAny,)
-    serializer_class = SafeCreationEstimateSerializer
-
-    @swagger_auto_schema(responses={201: SafeCreationEstimateResponseSerializer(),
-                                    400: 'Invalid data',
-                                    422: 'Cannot process data'})
-    def post(self, request, *args, **kwargs):
-        """
-        Estimates creation of a Safe
-        """
-        serializer = self.serializer_class(data=request.data)
-        if serializer.is_valid():
-            number_owners, payment_token = serializer.data['number_owners'], serializer.data['payment_token']
-            safe_creation_estimate = SafeCreationServiceProvider().estimate_safe_creation(number_owners, payment_token)
-            safe_creation_estimate_response_data = SafeCreationEstimateResponseSerializer(safe_creation_estimate)
-            return Response(status=status.HTTP_200_OK, data=safe_creation_estimate_response_data.data)
-        else:
-            return Response(status=status.HTTP_422_UNPROCESSABLE_ENTITY, data=serializer.errors)
 
 
 class SafeView(APIView):
