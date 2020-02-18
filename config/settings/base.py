@@ -40,7 +40,7 @@ USE_TZ = True
 # ------------------------------------------------------------------------------
 # https://docs.djangoproject.com/en/dev/ref/settings/#databases
 DATABASES = {
-    'default': env.db('DATABASE_URL'),
+    'default': env.db('DATABASE_URL', default='psql://postgres@db:5432/postgres'),
 }
 DATABASES['default']['ATOMIC_REQUESTS'] = True
 
@@ -321,5 +321,10 @@ TOKEN_LOGO_EXTENSION = env('TOKEN_LOGO_EXTENSION', default='.png')
 
 INTERNAL_TXS_BLOCK_PROCESS_LIMIT = env('INTERNAL_TXS_BLOCK_PROCESS_LIMIT', default=100000)
 
-SAFE_AUTO_FUND = env('SAFE_AUTO_FUND', default=False)
-SAFE_AUTO_APPROVE_TOKEN = env('SAFE_AUTO_APPROVE_TOKEN', default=False)
+SAFE_AUTO_FUND = env.bool('SAFE_AUTO_FUND', default=False)
+SAFE_AUTO_APPROVE_TOKEN = env.bool('SAFE_AUTO_APPROVE_TOKEN', default=False)
+
+SAFE_DEFAULT_TOKEN_ADDRESS = env('SAFE_DEFAULT_TOKEN_ADDRESS', default='')
+SAFE_DEFAULT_TOKEN_NAME = env('SAFE_DEFAULT_TOKEN_NAME', default='DAI')
+SAFE_DEFAULT_TOKEN_SYMBOL = env('SAFE_DEFAULT_TOKEN_SYMBOL', default='DAI')
+SAFE_DEFAULT_TOKEN_DECIMALS = env.int('SAFE_DEFAULT_TOKEN_DECIMALS', default=2)
