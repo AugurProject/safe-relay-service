@@ -10,12 +10,7 @@ DEBUG = env.bool('DJANGO_DEBUG', default=True)
 # https://docs.djangoproject.com/en/dev/ref/settings/#secret-key
 SECRET_KEY = env('DJANGO_SECRET_KEY', default='aHdCBMHXuxIxEhfRGFRp7Cp3N9CqEZEEAvwZVlBCazKExkEnzvVs4bYWC8Qqh9lg')
 # https://docs.djangoproject.com/en/dev/ref/settings/#allowed-hosts
-ALLOWED_HOSTS = [
-    "localhost",
-    "0.0.0.0",
-    "127.0.0.1",
-    "gnosis.kovan.augur.net"
-]
+ALLOWED_HOSTS = env('ALLOWED_HOSTS', default=["localhost", "0.0.0.0", "127.0.0.1", "gnosis.kovan.augur.net"])
 
 # CACHES
 # ------------------------------------------------------------------------------
@@ -60,20 +55,20 @@ CELERY_ALWAYS_EAGER = False
 
 if env.bool('USE_DOCKER', default=False):
     hostname, _, ips = socket.gethostbyname_ex(socket.gethostname())
-    INTERNAL_IPS += [ip[:-1] + '1' for ip in ips]
+INTERNAL_IPS += [ip[:-1] + '1' for ip in ips]
 
-    CACHES = {
-        'default': {
-            'BACKEND': 'django_redis.cache.RedisCache',
-            'LOCATION': env('REDIS_URL'),
-            'OPTIONS': {
-                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-                # Mimicing memcache behavior.
-                # http://niwinz.github.io/django-redis/latest/#_memcached_exceptions_behavior
-                'IGNORE_EXCEPTIONS': True,
-            }
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': env('REDIS_URL'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            # Mimicing memcache behavior.
+            # http://niwinz.github.io/django-redis/latest/#_memcached_exceptions_behavior
+            'IGNORE_EXCEPTIONS': True,
         }
     }
+}
 
 # SAFE
 FIXED_GAS_PRICE = 1
