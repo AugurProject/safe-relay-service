@@ -282,9 +282,6 @@ class TransactionService:
         safe_contract = SafeContract.objects.get(address=safe_address)
         created = timezone.now()
 
-        if SafeMultisigTx.objects.filter(safe=safe_contract, nonce=nonce).exists():
-            raise SafeMultisigTxExists(f'Tx with nonce={nonce} for safe={safe_address} already exists in DB. Skipping TX.')
-
         signature_pairs = [(s['v'], s['r'], s['s']) for s in signatures]
         signatures_packed = signatures_to_bytes(signature_pairs)
 
